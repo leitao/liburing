@@ -715,6 +715,12 @@ struct io_uring_recvmsg_out {
 	__u32 flags;
 };
 
+/*
+ * Argument for IORING_OP_URING_CMD when file is a socket
+ */
+#define SOCKET_URING_OP_SIOCINQ _IOR(0xcc, 0xa0, int)
+#define SOCKET_URING_OP_SIOCOUTQ _IOR(0xcc, 0xa1, int)
+
 #ifdef __cplusplus
 }
 #endif
