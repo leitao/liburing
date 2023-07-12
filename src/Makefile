@@ -10,9 +10,8 @@ CPPFLAGS ?=
 override CPPFLAGS += -D_GNU_SOURCE \
 	-Iinclude/ -include ../config-host.h \
 	-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-CFLAGS ?= -g -O3 -Wall -Wextra
+CFLAGS ?= -g -O3 -Wall -Wextra -fno-stack-protector
 override CFLAGS += -Wno-unused-parameter \
-	-fno-stack-protector \
 	-DLIBURING_INTERNAL \
 	$(LIBURING_CFLAGS)
 SO_CFLAGS=-fPIC $(CFLAGS)
@@ -46,8 +45,8 @@ liburing_srcs := setup.c queue.c register.c syscall.c version.c
 
 ifeq ($(CONFIG_NOLIBC),y)
 	liburing_srcs += nolibc.c
-	override CFLAGS += -nostdlib -nodefaultlibs -ffreestanding -fno-builtin
-	override CPPFLAGS += -nostdlib -nodefaultlibs -ffreestanding -fno-builtin
+	override CFLAGS += -nostdlib -nodefaultlibs -ffreestanding -fno-builtin -fno-stack-protector
+	override CPPFLAGS += -nostdlib -nodefaultlibs -ffreestanding -fno-builtin -fno-stack-protector
 	override LINK_FLAGS += -nostdlib -nodefaultlibs
 endif
 
@@ -82,7 +81,7 @@ liburing-ffi.a: $(liburing_objs) $(liburing_ffi_objs)
 $(libname): $(liburing_sobjs) liburing.map
 	$(QUIET_CC)$(CC) $(SO_CFLAGS) -shared -Wl,--version-script=liburing.map -Wl,-soname=$(soname) -o $@ $(liburing_sobjs) $(LINK_FLAGS)
 
-$(ffi_libname): $(liburing_ffi_objs) $(liburing_ffi_sobjs) liburing-ffi.map
+$(ffi_libname): $(liburing_ffi_objs) $(liburing_ffi_sobjs) $(liburing_sobjs) liburing-ffi.map
 	$(QUIET_CC)$(CC) $(SO_CFLAGS) -shared -Wl,--version-script=liburing-ffi.map -Wl,-soname=$(ffi_soname) -o $@ $(liburing_sobjs) $(liburing_ffi_sobjs) $(LINK_FLAGS)
 
 install: $(all_targets)
