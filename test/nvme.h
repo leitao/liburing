@@ -17,7 +17,7 @@ extern "C" {
  * support, use the local version to prevent compilation issues.
  */
 #ifndef CONFIG_HAVE_NVME_URING
-struct nvme_uring_cmd {
+struct _nvme_uring_cmd {
 	__u8	opcode;
 	__u8	flags;
 	__u16	rsvd1;
