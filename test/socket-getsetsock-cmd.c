@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <linux/sockios.h>
 #include <sys/ioctl.h>
+#include <linux/tcp.h>
 
 #include "liburing.h"
 #include "helpers.h"
@@ -155,11 +156,6 @@ static int receive_cqe(struct io_uring *ring)
 	return cqe->res;
 }
 
-static ssize_t send_data(struct testsocks *s, char *str)
-{
-	return write(s->send, str, strlen(str));
-}
-
 /*
  * Run getsock operation using (SOL_SOCKET, SO_RCVBUF) using io_uring cmd operation
  * and getsockopt(2) and compare the result
@@ -175,6 +171,7 @@ static int run_get_rcvbuf(struct io_uring *ring, struct testsocks *sockstruct)
 	err = getsock_submit_sqe(ring, sockstruct->accepted, SOCKET_URING_OP_GETSOCKOPT,
 					SOL_SOCKET, SO_RCVBUF, &ur_val, ur_len);
 	assert(err == 1);
+
 	/* Wait for the CQE */
 	ur_len = receive_cqe(ring);
 	if (ur_len == -EOPNOTSUPP)
@@ -220,7 +217,6 @@ static int run_get_peername(struct io_uring *ring, struct testsocks *sockstruct)
 
 	/* Make sure that io_uring operation returns the same value as the systemcall */
 	assert(sc_val.sa_family == ur_val.sa_family);
-	fprintf(stderr, "%d %d\n", sc_len, ur_len);
 	assert(sc_len == ur_len);
 
 	return T_EXIT_PASS;
@@ -236,20 +232,13 @@ static int run_getsockopt_test(struct io_uring *ring, struct testsocks *sockstru
 
 	fprintf(stderr, "Testing getsockopt SO_PEERNAME\n");
 	err = run_get_peername(ring, sockstruct);
-	if (err == T_EXIT_SKIP) {
-		fprintf(stderr, "Skipping tests. -ENOTSUP returned\n");
+	if (err)
 		return err;
-	}
-	assert(err == T_EXIT_PASS);
 
 	fprintf(stderr, "Testing getsockopt SO_RCVBUF\n");
 	err = run_get_rcvbuf(ring, sockstruct);
-	if (err == -ENOTSUP) {
-		fprintf(stderr, "Skipping tests. -ENOTSUP returned\n");
-		return err;
-	}
 
-	return T_EXIT_PASS;
+	return err;
 }
 
 static int run_set_reuseport(struct io_uring *ring, struct testsocks *sockstruct)
@@ -263,6 +252,7 @@ static int run_set_reuseport(struct io_uring *ring, struct testsocks *sockstruct
 	err = setsock_submit_sqe(ring, sockstruct->accepted, SOCKET_URING_OP_SETSOCKOPT,
 				 SOL_SOCKET, SO_REUSEPORT, &uval, sizeof(uval));
 	assert(err == 1);
+
 	err = receive_cqe(ring);
 	if (err == -EOPNOTSUPP)
 		return T_EXIT_SKIP;
@@ -296,25 +286,84 @@ static int run_set_reuseport(struct io_uring *ring, struct testsocks *sockstruct
 	return T_EXIT_PASS;
 }
 
+/* Test setsockopt() for IPPROTO_TCP */
+static int run_set_fastopen(struct io_uring *ring, struct testsocks *sockstruct)
+{
+	int sval, uval = 1;
+	int err;
+	unsigned int len = sizeof(uval);
+	int level = IPPROTO_TCP;
+	int optname = TCP_FASTOPEN;
+
+	/* Setting SO_FASTOPEN */
+	err = setsock_submit_sqe(ring, sockstruct->receive, SOCKET_URING_OP_SETSOCKOPT,
+				 level, optname, &uval, sizeof(uval));
+	assert(err == 1);
+
+	err = receive_cqe(ring);
+	if (err == -EOPNOTSUPP)
+		return T_EXIT_SKIP;
+	assert (err == 0);
+
+	/* Get the configuration from the systemcall, to make sure it was set */
+	err = getsockopt(sockstruct->receive, level, optname, &sval, &len);
+	assert (err == 0);
+
+	/* Make sure the set using io_uring cmd matches what systemcall returns */
+	assert (uval == sval);
+
+	/* Let's do the oposite now */
+	uval = 9;
+
+	/* set through io_uring cmd */
+	err = setsock_submit_sqe(ring, sockstruct->receive, SOCKET_URING_OP_SETSOCKOPT,
+				 level, optname, &uval, sizeof(uval));
+	assert(err == 1);
+
+	/* Wait for the CQE */
+	err = receive_cqe(ring);
+	if (err == -EOPNOTSUPP)
+		return T_EXIT_SKIP;
+	fprintf(stderr, "err = %d\n", err);
+	assert(err == 0);
+
+	err = getsockopt(sockstruct->receive, level, optname, &sval, &len);
+	assert(err == 0);
+
+	/* Make sure the set using io_uring cmd matches what systemcall returns */
+	assert (uval == sval);
+
+	return T_EXIT_PASS;
+}
+
+/* Test setsockopt() for SOL_SOCKET */
 static int run_setsockopt_test(struct io_uring *ring, struct testsocks *sockstruct)
 {
 	int err;
 
-	fprintf(stderr, "Testing set SO_REUSEPORT\n");
+	fprintf(stderr, "Testing set SOL_SOCKET/SO_REUSEPORT\n");
 	err = run_set_reuseport(ring, sockstruct);
-	if (err == T_EXIT_SKIP) {
-		fprintf(stderr, "Skipping tests. -ENOTSUP returned\n");
-		return T_EXIT_SKIP;
-	}
-	assert(err == T_EXIT_PASS);
+	if (err)
+		return err;
 
-	return T_EXIT_PASS;
+	fprintf(stderr, "Testing set IPPROTO_TCP/TCP_FASTOPEN\n");
+	err = run_set_fastopen(ring, sockstruct);
+
+	return err;
+}
+
+/* Send data throughts the sockets */
+void send_data(struct testsocks *s)
+{
+	int written_bytes;
+	/* Send data sing the sockstruct->send */
+	written_bytes = write(s->send, MSG, strlen(MSG));
+	assert(written_bytes == strlen(MSG));
 }
 
 int main(int argc, char *argv[])
 {
 	struct testsocks sockstruct;
-	size_t written_bytes;
 	struct io_uring ring;
 	int err;
 
@@ -326,13 +375,24 @@ int main(int argc, char *argv[])
 
 	/* Create three sockets */
 	sockstruct = create_sockets();
-	/* Send data sing the sockstruct->send */
-	written_bytes = send_data(&sockstruct, MSG);
-	assert(written_bytes == strlen(MSG));
+
+	send_data(&sockstruct);
 
 	err = run_getsockopt_test(&ring, &sockstruct);
+	if (err) {
+		if (err == T_EXIT_SKIP)
+			fprintf(stderr, "Skipping tests. -ENOTSUP returned\n");
+		fprintf(stderr, "Failed ot run test: %d\n", err);
+		return err;
+	}
 
-	err |= run_setsockopt_test(&ring, &sockstruct);
+	err = run_setsockopt_test(&ring, &sockstruct);
+	if (err) {
+		if (err == T_EXIT_SKIP)
+			fprintf(stderr, "Skipping tests. -ENOTSUP returned\n");
+		fprintf(stderr, "Failed ot run test: %d\n", err);
+		return err;
+	}
 
 	io_uring_queue_exit(&ring);
 	return err;
