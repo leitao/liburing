@@ -1129,8 +1129,6 @@ IOURINGINLINE void io_uring_prep_socket_direct_alloc(struct io_uring_sqe *sqe,
 }
 
 
-#define UNUSED(x) (void)(x)
-
 /*
  * Prepare commands for sockets
  */
@@ -1142,13 +1140,12 @@ IOURINGINLINE void io_uring_prep_cmd_sock(struct io_uring_sqe *sqe,
 					  void *optval,
 					  int optlen)
 {
-	/* This will be removed once the get/setsockopt() patches land */
-	UNUSED(optlen);
-	UNUSED(optval);
-	UNUSED(level);
-	UNUSED(optname);
 	io_uring_prep_rw(IORING_OP_URING_CMD, sqe, fd, NULL, 0, 0);
+	sqe->optval = (long long unsigned int)optval;
+	sqe->optname = optname;
+	sqe->optlen = optlen;
 	sqe->cmd_op = cmd_op;
+	sqe->level = level;
 }
 
 /*
